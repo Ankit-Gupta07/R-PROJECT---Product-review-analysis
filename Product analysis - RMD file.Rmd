@@ -1,0 +1,333 @@
+---
+title: "Product review - Sentiment analysis"
+author: "Ankit Gupta"
+output:
+  html_document:
+    df_print: paged
+---
+Hey all! This is a small attempt to learn something new in R programming in my data analytics journey and while doing so I thought why not make something that is useful to everyone!<br>
+
+So I've built a R program which will help you to make a better call of whether to buy a product or not from an e-commerce website!<br>
+
+NOTE - this program scrapes the data from Flipkart (it can be changed as per the need).
+
+**STEP 1** :- We start with installing and loading the required packages. Here is the breakdown -<br>
+**&nbsp;&nbsp;&nbsp;revest** - Used for scraping the data from the website<br>
+**&nbsp;&nbsp;&nbsp;dplyr** - Used for manipulating the scrapped data<br>
+**&nbsp;&nbsp;&nbsp;tidyverse** - Used for transforming the scrapped data<br>
+**&nbsp;&nbsp;&nbsp;sentimentr** - Used for analysing the reviews of a product and allocate a sentiment score to it<br> 
+**&nbsp;&nbsp;&nbsp;ggplot2** - Used for data visualisation<br>
+**&nbsp;&nbsp;&nbsp;tm** - Used for text mining related to word clouds<br>
+**&nbsp;&nbsp;&nbsp;wordcloud** - Used for generating the word cloud for positive and negative reviews
+```{r}
+# install.packages("rvest")
+# install.packages("dplyr")
+# install.packages("tidyverse")
+# install.packages("sentimentr")
+# install.packages("ggplot2")
+# install.packages("tm")
+# install.packages("wordcloud")
+
+library(rvest)
+library(dplyr)
+library(tidyverse)
+library(sentimentr)
+library(ggplot2)
+library(tm)
+library(wordcloud)
+```
+
+**STEP 2** - Once we have all the packages ready, we start with the collection and cleaning of data.<br>
+DATA source - We are scrapping the reviews given by users for a particular product on an e-commerce website. Here are the details - <br>
+&nbsp;&nbsp;&nbsp;E-commerce website - [Flipkart](https://www.flipkart.com/)<br>
+&nbsp;&nbsp;&nbsp;Product's review page - [Samsung Galaxy f13 waterfall](https://www.flipkart.com/samsung-galaxy-f13-waterfall-blue-64-gb/product-reviews/itm583ef432b2b0c?pid=MOBGENJWBPFYJSFT&lid=LSTMOBGENJWBPFYJSFTP8FGOC&marketplace=FLIPKART&page=1)<br>
+<br>
+Once this data is scrapped and stored in the data frame, we clean it by removing extra spaces, removing new line characters and removing any other irrelevant text.<br>
+<br>
+NOTE - here we are only scrapping the reviews present on the first 30 pages only (it can be changed as per the need in the for loop)
+```{r}
+product_review <- data.frame()
+
+for (page_number in seq(from = 1, to = 30, by = 1)) {
+  link = paste0("https://www.flipkart.com/samsung-galaxy-f13-waterfall-blue-64-gb/product-reviews/itm583ef432b2b0c?pid=MOBGENJWBPFYJSFT&lid=LSTMOBGENJWBPFYJSFTP8FGOC&marketplace=FLIPKART&page=",page_number)
+  web_page <- read_html(link)
+  
+  user_review <- web_page %>% html_nodes("div.t-ZTKy") %>% html_text()
+  user_rating <- web_page %>% html_nodes("div._3LWZlK._1BLPMq") %>% html_text()
+  # review_date <- web_page %>% html_nodes("p._2sc72R") %>% html_text()
+  
+  product_review <- rbind(product_review, data.frame(user_review, user_rating, stringsAsFactors = FALSE))
+  print(paste("Page:", page_number))
+}
+
+# Define a function to clean the text within a data frame
+clean_reviews <- function(data_frame) {
+  # Load required library
+  library(stringr)
+  
+  # Define a function to clean a single review
+  clean_text <- function(text) {
+    # Remove newline characters
+    cleaned_text <- gsub("\r\n", " ", text)
+    # Replace multiple spaces with a single space
+    cleaned_text <- str_replace_all(cleaned_text, "\\s+", " ")
+    # Remove leading and trailing spaces
+    cleaned_text <- str_trim(cleaned_text)
+    # Remove non ASCII characters
+    cleaned_text <- gsub("[^\x01-\x7F]", "", cleaned_text)
+    # Remove "READ MORE" at the end of the review
+    cleaned_text <- gsub("READ MORE$", "", cleaned_text)
+    return(cleaned_text)
+  }
+  # Clean the "user_review" column in the data frame
+  data_frame$user_review <- sapply(data_frame$user_review, clean_text)
+  
+  # Return the cleaned data frame
+  return(data_frame)
+}
+
+# Clean the reviews in the product_review data frame
+product_review <- clean_reviews(product_review)
+```
+
+**STEP 3** - After we have collected and cleaned our data, we will compute the average sentiment score of every review and store in the same data frame.<br>
+But, why the average sentiment score?<br>
+<br>
+Well, it's because the **sentimentr** package calculates the sentiment score of a single sentence at a time, but a review might have multiple sentences inside it.<br>That's why we calculate the sentiment score of every sentence inside a review and then calculate the overall average sentiment score of a single review. This goes on for all the reviews!
+```{r}
+# Function to compute the average sentiment score for a review
+compute_average_sentiment <- function(review_text) {
+  # Split the review text into sentences
+  sentences <- unlist(strsplit(review_text, "\\."))  # Split by period (.)
+  
+  # Remove empty sentences and leading/trailing whitespace
+  sentences <- trimws(sentences[sentences != ""])
+  
+  # Check if there are any valid sentences
+  if (length(sentences) == 0) {
+    avg_sentiment <- NA  # Handle cases with no valid sentences
+  } else {
+    # Initialize a vector to store the sentiment scores for each sentence
+    sentence_scores <- numeric(length(sentences))
+    
+    # Calculate the sentiment score for each sentence
+    for (i in 1:length(sentences)) {
+      sentence_scores[i] <- mean(sentiment(sentences[i])$sentiment)
+    }
+    
+    # Compute the average sentiment score for the whole review
+    avg_sentiment <- mean(sentence_scores, na.rm = TRUE)
+  }
+  
+  return(avg_sentiment)
+}
+
+# Compute the average sentiment score for each review and add it to the data frame
+product_review$average_sentiment <- sapply(product_review$user_review, compute_average_sentiment)
+View(product_review)
+```
+
+**STEP 4** - Now, our data is ready for visualisation!<br> This is where the magic of data will enable you to take a better decision of whether a particular product is worth buying or not.<br>
+<br>
+Here we have two graphs -<br>
+**&nbsp;&nbsp;&nbsp;A bar chart** - This chart shows "how many customers have rated the product with a particular rating"<br> &nbsp;&nbsp;&nbsp;INFO - The ratings fall in the range of 1 to 5 stars <br> 
+&nbsp;&nbsp;&nbsp;RIGHT DECISION (using graph) - 5 star rating should have the highest frequency!
+<br><br>
+**&nbsp;&nbsp;&nbsp;A histogram** - This chart shows "the distribution of the review-sentiments given by the customers"<br> &nbsp;&nbsp;&nbsp;INFO - Three types of sentiments: negative, neutral and positive <br> 
+&nbsp;&nbsp;&nbsp;RIGHT DECISION (using graph) - Positive sentiment should have the highest frequency!<br>
+<br>
+NOTE - **sentimentr** package gives the rating as per this scale:-<br>
+**&nbsp;&nbsp;&nbsp;Score > 0** means "positive sentiment" (more closer to 1, more the positive sentiment)<br>
+**&nbsp;&nbsp;&nbsp;Score = 0** means "neutral sentiment" (more closer to 0, more the neutral sentiment)<br>
+**&nbsp;&nbsp;&nbsp;Score < 0** means "negative sentiment" (more closer to -1, more the negative sentiment)
+```{r}
+# Create a bar chart for the distribution of ratings with reduced bar width
+rating_bar_chart <- ggplot(product_review, aes(x = as.factor(user_rating), fill = as.factor(user_rating))) +
+  geom_bar(width = 0.5) +  # Set the width parameter to a smaller value (e.g., 0.6)
+  labs(x = "Rating", y = "Frequency", title = "Distribution of Ratings") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Blues") +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5, size = 4, color = "black") +
+  theme(legend.position = "none")
+
+# Create a histogram with color-coded bars
+sentiment_histogram <- ggplot(product_review, aes(x = average_sentiment, fill = factor(ifelse(average_sentiment < 0, "Negative", ifelse(average_sentiment == 0, "Neutral", "Positive"))))) +
+  geom_histogram(binwidth = 0.3, color = "black") +
+  labs(x = "Scores", y = "Frequency", title = "Distribution of Scores") +
+  scale_fill_manual(values = c("Negative" = "red", "Neutral" = "grey", "Positive" = "green")) +
+  theme_minimal() +
+  labs(fill = "Sentiment") +
+  theme(legend.title = element_text(size = 12), legend.text = element_text(size = 10))
+
+# Display the bar chart and histogram side by side
+library(gridExtra)
+grid.arrange(rating_bar_chart, sentiment_histogram, ncol = 2)
+```
+
+**STEP 5** - Once you have an overall idea about the product. You can deep dive into the specific features of the product. All you need to do is to type the feature name of the product you want to check the sentiment for.<br>
+<br>
+NOTE - It could be anything inside the product (example - for a phone it could be camera, speaker etc)
+```{r}
+# Prompt the user to enter the product feature keyword
+keyword <- readline(prompt = "Enter the product feature keyword: ")
+```
+
+**STEP 6** - Once you have entered the product feature, the code will go through all the reviews that is scrapped and will look for a match of the string of product feature.<br>
+<br>
+If there is a match - then using the sentiment scores of all the sentences where there is a match a final average score will be displayed.<br>
+If there isn't a match - then obviously there are no reviews which talks about the provided product feature.<br>
+<br>
+NOTE - The scores are given as per this scale:-<br>
+**&nbsp;&nbsp;&nbsp;Score > 0** means "positive sentiment" (more closer to 1, more the positive sentiment)<br>
+**&nbsp;&nbsp;&nbsp;Score = 0** means "neutral sentiment" (more closer to 0, more the neutral sentiment)<br>
+**&nbsp;&nbsp;&nbsp;Score < 0** means "negative sentiment" (more closer to -1, more the negative sentiment)
+```{r}
+# Function to analyze sentiment for a specific keyword
+analyze_keyword_sentiment <- function(keyword) {
+  # Create a vector to store sentiment scores for sentences containing the keyword
+  keyword_sentiment_scores <- c()
+  
+  # Iterate through reviews
+  for (review in product_review$user_review) {
+    # Split the review into sentences
+    sentences <- unlist(strsplit(review, "\\."))  # Split by period (.)
+    
+    # Remove empty sentences and leading/trailing whitespace
+    sentences <- trimws(sentences[sentences != ""])
+    
+    # Check if the keyword is present in any sentence
+    for (sentence in sentences) {
+      if (grepl(keyword, sentence, ignore.case = TRUE)) {
+        # Calculate sentiment score for the sentence and store it
+        sentiment_score <- mean(sentiment(sentence)$sentiment)
+        keyword_sentiment_scores <- c(keyword_sentiment_scores, sentiment_score)
+      }
+    }
+  }
+  
+  # Check if there are sentiment scores for the keyword
+  if (length(keyword_sentiment_scores) > 0) {
+    # Calculate overall sentiment summary or recommendation
+    overall_sentiment <- mean(keyword_sentiment_scores)
+    
+    cat("Overall Recommendation for the product feature '", keyword, "':\n")
+    cat("Average Sentiment Score:", overall_sentiment, "\n")
+    # You can add more logic for recommendations based on sentiment scores here
+  } else {
+    cat("No reviews contain the keyword '", keyword, "'.\n")
+  }
+}
+
+# Analyze sentiment for the specified keyword
+analyze_keyword_sentiment(keyword)
+```
+**STEP 7** - After deep diving into the product features specifically, we can just have a look at the top 5 +ve reviews given by the customers to get a sense of what do the best reviews talk about!
+```{r}
+# Sort the data frame by average_sentiment in descending order to get the most positive reviews first
+top_positive_reviews <- product_review[order(-product_review$average_sentiment), ]
+
+# Get the top 5 positive reviews
+top_5_positive_reviews <- head(top_positive_reviews, 5)
+
+# Display the top 5 positive and negative reviews
+cat("Top 5 Positive Reviews:\n")
+for (i in 1:5) {
+  cat("Review", i, ":", top_5_positive_reviews$user_review[i], "\n")
+}
+```
+
+**STEP 8** - Similarly, we can just have a look at the top 5 -ve reviews given by the customers to get a sense of what do the worst reviews talk about!
+```{r}
+# Sort the data frame by average_sentiment in ascending order to get the most negative reviews first
+top_negative_reviews <- product_review[order(product_review$average_sentiment), ]
+
+# Get the top 5 negative reviews
+top_5_negative_reviews <- head(top_negative_reviews, 5)
+
+cat("\nTop 5 Negative Reviews:\n")
+for (i in 1:5) {
+  cat("Review", i, ":", top_5_negative_reviews$user_review[i], "\n")
+}
+```
+
+**STEP 9** - Once we have enough idea about how the sentiments of the reviews are<br> We can plot the relationship between the ratings and the sentiment scores of the reviews to understand things on a larger scale!
+<br>
+Here we have two graphs -<br>
+**&nbsp;&nbsp;&nbsp;A Scatter plot** - This chart shows "the relationship between the ratings and the sentiment scores of the reviews"<br> &nbsp;&nbsp;&nbsp;INFO - The ratings fall in the range of 1 to 5 stars. <br> 
+&nbsp;&nbsp;&nbsp;RIGHT DECISION (using graph) - Highest rating should also have the most dense scatter above neutral sentiment score!
+<br><br>
+**&nbsp;&nbsp;&nbsp;A Box plot** - This chart shows "how the data is distributed and it also shows any outliers"<br> &nbsp;&nbsp;&nbsp;INFO - We can compare different sets of data at once together (50% of data is within the box).<br> 
+&nbsp;&nbsp;&nbsp;RIGHT DECISION (using graph) - More than 50% of the data should be have the positive sentiment (for 5 star rating)  <br>
+<br>
+NOTE - The scores are given as per this scale:-<br>
+**&nbsp;&nbsp;&nbsp;Score > 0** means "positive sentiment" (more closer to 1, more the positive sentiment)<br>
+**&nbsp;&nbsp;&nbsp;Score = 0** means "neutral sentiment" (more closer to 0, more the neutral sentiment)<br>
+**&nbsp;&nbsp;&nbsp;Score < 0** means "negative sentiment" (more closer to -1, more the negative sentiment)
+```{r}
+# Scatterplot of Ratings vs. Sentiment Scores
+scatterplot <- ggplot(product_review, aes(x = user_rating, y = average_sentiment)) +
+  geom_point(color = "#3498db", alpha = 0.6, size = 3) +  # Customize point aesthetics
+  labs(x = "Rating", y = "Average Sentiment Score", title = "Ratings & Sentiment Score") +
+  theme_minimal() +  # Use a minimal theme
+  theme(plot.title = element_text(size = 12, face = "bold"))
+
+# Box Plot of Sentiment Scores by Rating
+boxplot <- ggplot(product_review, aes(x = as.factor(user_rating), y = average_sentiment)) +
+  geom_boxplot(fill = "#e74c3c", color = "#c0392b", alpha = 0.7) +  # Customize box plot aesthetics
+  labs(x = "Rating", y = "Average Sentiment Score", title = "Distribution of Sentiment Scores") +
+  theme_minimal() +  # Use a minimal theme
+  theme(plot.title = element_text(size = 12, face = "bold"))
+
+# Combine the plots side by side
+combined_plots <- grid.arrange(scatterplot, boxplot, ncol = 2)
+```
+**STEP 10** - After understanding the relationships of the ratings and their sentiments, we can see the Word cloud for +ve reviews - to get a sense of which words are being repeated more in the reviews which have positive sentiment.<br>
+<br>
+This can help you to specifically research about the product's feature from multiple resources to make the right call!
+```{r}
+positive_reviews <- product_review$user_review[product_review$average_sentiment > 0]
+
+# Define custom stopwords to be removed
+custom_stopwords <- c("good", "much", "better", "product", "nice", "best", "samsung", "awesome", "phone", "also", "flipkart", "thank", "happy")  # Add any other words you want to remove
+
+# Create a corpus from positive reviews
+positive_reviews_corpus <- Corpus(VectorSource(positive_reviews))
+
+# Preprocess the corpus
+clean_corpus <- tm_map(positive_reviews_corpus, content_transformer(tolower))
+clean_corpus <- tm_map(clean_corpus, removePunctuation)
+clean_corpus <- tm_map(clean_corpus, removeNumbers)
+clean_corpus <- tm_map(clean_corpus, removeWords, stopwords("english"))  # Remove standard English stopwords
+clean_corpus <- tm_map(clean_corpus, removeWords, custom_stopwords)     # Remove custom stopwords
+
+# Generate the word cloud
+wordcloud(words = names(table(unlist(strsplit(unlist(clean_corpus), "\\s+")))),
+          freq = table(unlist(strsplit(unlist(clean_corpus), "\\s+"))), min.freq = 5,
+          scale = c(4, 0.5), colors = brewer.pal(8, "Dark2"))
+
+```
+**STEP 11** - Similarly, we can see the Word cloud for -ve reviews - to get a sense of which words are being repeated more in the reviews which have negative sentiment.<br>
+<br>
+This can help you to specifically research about the product's feature from multiple resources to make the right call!
+```{r}
+# Negative reviews
+negative_reviews <- product_review$user_review[product_review$average_sentiment < 0]
+
+# Define custom stopwords to be removed
+custom_stopwords <- c("good", "much", "better", "product", "nice", "best", "samsung", "awesome", "phone", "also", "flipkart", "thank", "happy")  # Add any other words you want to remove
+
+# Create a corpus from negative reviews
+negative_reviews_corpus <- Corpus(VectorSource(negative_reviews))
+
+# Preprocess the corpus
+clean_corpus <- tm_map(negative_reviews_corpus, content_transformer(tolower))
+clean_corpus <- tm_map(clean_corpus, removePunctuation)
+clean_corpus <- tm_map(clean_corpus, removeNumbers)
+clean_corpus <- tm_map(clean_corpus, removeWords, stopwords("english"))  # Remove standard English stopwords
+clean_corpus <- tm_map(clean_corpus, removeWords, custom_stopwords)     # Remove custom stopwords
+
+# Generate the word cloud for negative reviews
+wordcloud(words = names(table(unlist(strsplit(unlist(clean_corpus), "\\s+")))),
+          freq = table(unlist(strsplit(unlist(clean_corpus), "\\s+"))), min.freq = 2,
+          scale = c(4, 0.5), colors = brewer.pal(8, "Dark2"))
+```
